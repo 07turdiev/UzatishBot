@@ -224,7 +224,7 @@ async def request_forward_approval(client: Client, token: str, source_title: str
             logger.warning(f"Approval prompt not delivered to admin {admin_id}: {e}")
 
 
-def get_destinations_sorted() -> List[tuple[int, str]]:
+def get_destinations_sorted() -> List[Tuple[int, str]]:
     # Stable order by title then id
     return sorted(DESTINATION_CHANNELS.items(), key=lambda kv: (kv[1] or "", kv[0]))
 
@@ -322,7 +322,7 @@ async def help_handler(client: Client, message: Message) -> None:
     await message.reply_text(help_text)
 
 
-async def _make_channels_page(page: int = 0, per_page: int = PAGE_SIZE_CHANNELS) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+async def _make_channels_page(page: int = 0, per_page: int = PAGE_SIZE_CHANNELS) -> Tuple[str, Optional[InlineKeyboardMarkup]]:
     items = get_destinations_sorted()
     total = len(items)
     total_pages = max(1, math.ceil(total / per_page))
@@ -345,7 +345,7 @@ async def _make_channels_page(page: int = 0, per_page: int = PAGE_SIZE_CHANNELS)
     return text, markup
 
 
-async def _make_diagnose_page(client: Client, page: int = 0, per_page: int = PAGE_SIZE_DIAGNOSE) -> tuple[str, InlineKeyboardMarkup]:
+async def _make_diagnose_page(client: Client, page: int = 0, per_page: int = PAGE_SIZE_DIAGNOSE) -> Tuple[str, InlineKeyboardMarkup]:
     items = get_destinations_sorted()
     total = len(items)
     total_pages = max(1, math.ceil(total / per_page))
