@@ -4,7 +4,7 @@ import json
 import asyncio
 import logging
 import io
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Set
 
 from dotenv import load_dotenv
 from pyrogram import Client, filters
@@ -120,8 +120,8 @@ media_groups: Dict[str, List[Message]] = {}
 media_group_timers: Dict[str, asyncio.Task] = {}
 CHECK_CHANNEL_STATE: Dict[int, dict] = {}
 REMOVE_CHANNEL_STATE: Dict[int, dict] = {}
-VALID_DEST_CHANNELS: set[int] = set()
-INVALID_DEST_CHANNELS: set[int] = set()
+VALID_DEST_CHANNELS: Set[int] = set()
+INVALID_DEST_CHANNELS: Set[int] = set()
 PENDING_FORWARDS: Dict[str, dict] = {}
 
 
