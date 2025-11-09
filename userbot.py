@@ -620,27 +620,27 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             return
         if data.startswith("remove_list_page_"):
             # Pagination for remove list
-        if user_id not in REMOVE_CHANNEL_STATE:
+            if user_id not in REMOVE_CHANNEL_STATE:
                 await callback_query.answer("Holat topilmadi.")
-            return
+                return
             try:
                 new_page = int(data.split("_")[-1])
             except ValueError:
                 await callback_query.answer("Noto'g'ri sahifa.")
-            return
+                return
             REMOVE_CHANNEL_STATE[user_id]["page"] = max(0, new_page)
             markup = create_remove_list_markup(page=new_page)
             try:
                 await callback_query.message.edit_reply_markup(markup)
             except Exception:
                 try:
-        await callback_query.message.edit_text(
+                    await callback_query.message.edit_text(
                         "📋 O'chirish uchun kanal tanlang (tugmadan foydalaning):",
                         reply_markup=markup,
                     )
                 except Exception:
                     pass
-    await callback_query.answer()
+            await callback_query.answer()
             return
         if data.startswith("channels_page_"):
             if callback_query.from_user and callback_query.from_user.id not in ADMIN_USERS:
@@ -673,7 +673,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             except Exception:
                 pass
             await callback_query.answer()
-                return
+            return
         if data == "diagnose_download":
             if callback_query.from_user and callback_query.from_user.id not in ADMIN_USERS:
                 await callback_query.answer("Ruxsat yo'q")
@@ -686,14 +686,14 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                 await client.send_document(callback_query.from_user.id, doc, caption="Diagnose to'liq hisobot")
             except Exception:
                 pass
-        return    
+            return
         if data.startswith("fw_yes:") or data.startswith("fw_no:"):
             approve = data.startswith("fw_yes:")
             token = data.split(":", 1)[1]
             entry = PENDING_FORWARDS.get(token)
             if not entry:
                 await callback_query.answer("Bu so'rov topilmadi yoki muddati o'tgan.")
-            return
+                return
             status = entry.get("status")
             if status != "waiting":
                 await callback_query.answer("Allaqachon javob berilgan.")
@@ -710,7 +710,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                         await client.edit_message_text(admin_id, msg_id, "❌ Yuborish bekor qilindi.")
                     except Exception:
                         continue
-            return            
+                return
 
             from_chat_id = int(entry["from_chat_id"]) if "from_chat_id" in entry else None
             message_ids = list(entry.get("message_ids", []))
@@ -756,7 +756,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             if chat_id in DESTINATION_CHANNELS:
                 await callback_query.answer("❌ Bu kanal allaqachon ro'yxatda mavjud!")
                 return
-                    channel_info = CHECK_CHANNEL_STATE[user_id]
+            channel_info = CHECK_CHANNEL_STATE[user_id]
             DESTINATION_CHANNELS[chat_id] = channel_info.get("title") or str(chat_id)
             save_channels(DESTINATION_CHANNELS)
             await callback_query.message.edit_text(
@@ -766,7 +766,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             )
             CHECK_CHANNEL_STATE.pop(user_id, None)
             await callback_query.answer()
-                return
+            return
 
         if data.startswith("remove_channel_"):
             chat_id = int(data.split("_")[2])
@@ -872,8 +872,8 @@ if __name__ == "__main__":
         logger.error("SOURCE_CHANNEL is not set (env or channels.json). Set it before running.")
     else:
         logger.info("Userbot starting...")
-    logger.info(f"Manba kanal: {SOURCE_CHANNEL}")
-    logger.info(f"Maqsad kanallar: {DESTINATION_CHANNELS}")
+        logger.info(f"Manba kanal: {SOURCE_CHANNEL}")
+        logger.info(f"Maqsad kanallar: {DESTINATION_CHANNELS}")
         app.run()
 
 
