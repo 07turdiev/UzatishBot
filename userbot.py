@@ -168,6 +168,7 @@ async def ensure_destination_access(client: Client, dest_channel: int) -> bool:
     if dest_channel in VALID_DEST_CHANNELS:
         return True
     if dest_channel in INVALID_DEST_CHANNELS:
+        logger.debug(f"Destination {dest_channel} is in invalid cache, skipping")
         return False
     try:
         chat = await client.get_chat(dest_channel)
@@ -175,17 +176,33 @@ async def ensure_destination_access(client: Client, dest_channel: int) -> bool:
         can_post = bool(getattr(getattr(me, 'privileges', None), 'can_post_messages', False))
         if not can_post:
             logger.error(
-                f"Bot has no post permission in destination {chat.title} ({dest_channel}). "
-                f"Add the bot as admin with post permission."
+                f"Bot has no post permission in destination '{chat.title}' ({dest_channel}). "
+                f"Add the bot as admin with 'Post Messages' permission."
             )
             INVALID_DEST_CHANNELS.add(dest_channel)
             return False
         VALID_DEST_CHANNELS.add(dest_channel)
+        logger.info(f"✅ Destination '{chat.title}' ({dest_channel}) is accessible")
         return True
     except Exception as e:
+        error_msg = str(e)
+        if "PEER_ID_INVALID" in error_msg or "Peer id invalid" in error_msg:
+            logger.error(
+                f"❌ Destination {dest_channel}: Bot cannot access this channel. "
+                f"Possible reasons:\n"
+                f"  1. Bot is not added to the channel\n"
+                f"  2. Bot token is wrong (different bot was added as admin)\n"
+                f"  3. Channel ID is incorrect\n"
+                f"  4. Channel was deleted\n"
+                f"Solution: Remove channel with /remove_channel, then re-add with /check_channel"
+            )
+        else:
+            logger.error(
+                f"Cannot access destination {dest_channel}: {error_msg}. "
+                f"Make sure the bot is added as admin to that channel."
+            )
         logger.error(
-            f"Cannot access destination {dest_channel}: {e}. "
-            f"Make sure the bot is added as admin to that channel."
+            f"Full error details: {type(e).__name__}: {error_msg}"
         )
         INVALID_DEST_CHANNELS.add(dest_channel)
     return False
@@ -317,7 +334,8 @@ async def help_handler(client: Client, message: Message) -> None:
         "• /check_channel – Yangi kanal qo'shish\n"
         "• /remove_channel – Kanalni o'chirish\n"
         "• /channels – Kanallar ro'yxati\n"
-        "• /diagnose – Maqsad kanallarga kirish va ruxsatlarni tekshirish\n\n"
+        "• /diagnose – Maqsad kanallarga kirish va ruxsatlarni tekshirish\n"
+        "• /clear_cache – Invalid kanallar cache'ini tozalash\n\n"
     )
     await message.reply_text(help_text)
 
@@ -411,6 +429,24 @@ async def diagnose_handler(client: Client, message: Message) -> None:
         return
     text, markup = await _make_diagnose_page(client, page=0)
     await message.reply_text(text, reply_markup=markup)
+
+
+@app.on_message(filters.command("clear_cache") & filters.private)
+async def clear_cache_handler(client: Client, message: Message) -> None:
+    if message.from_user and message.from_user.id not in ADMIN_USERS:
+        await message.reply_text("❌ Kechirasiz, bu buyruq faqat adminlar uchun.")
+        return
+    cleared_invalid = len(INVALID_DEST_CHANNELS)
+    cleared_valid = len(VALID_DEST_CHANNELS)
+    INVALID_DEST_CHANNELS.clear()
+    VALID_DEST_CHANNELS.clear()
+    await message.reply_text(
+        f"✅ Cache tozalandi.\n"
+        f"Invalid kanallar: {cleared_invalid} ta\n"
+        f"Valid kanallar: {cleared_valid} ta\n\n"
+        f"Endi kanallar qayta tekshiriladi."
+    )
+    logger.info(f"Cache cleared by admin {message.from_user.id}: {cleared_invalid} invalid, {cleared_valid} valid")
 
 
 @app.on_message(filters.command("channels") & filters.private)
@@ -537,7 +573,7 @@ async def process_channel_remove_request(client: Client, message: Message, user_
         else:
             # Try resolving username to id
             try:
-                chat = await client.get_chat(channel)
+            chat = await client.get_chat(channel)
                 chat_id = int(chat.id)
             except Exception:
                 chat_id = None
@@ -552,7 +588,7 @@ async def process_channel_remove_request(client: Client, message: Message, user_
         if chat_id is None or chat_id not in DESTINATION_CHANNELS:
             REMOVE_CHANNEL_STATE.pop(user_id, None)
             await message.reply_text("❌ Bu kanal ro'yxatda topilmadi!")
-            return
+                return
 
         channel_name = DESTINATION_CHANNELS[chat_id]
         keyboard = InlineKeyboardMarkup([
@@ -584,27 +620,27 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             return
         if data.startswith("remove_list_page_"):
             # Pagination for remove list
-            if user_id not in REMOVE_CHANNEL_STATE:
+        if user_id not in REMOVE_CHANNEL_STATE:
                 await callback_query.answer("Holat topilmadi.")
-                return
+            return
             try:
                 new_page = int(data.split("_")[-1])
             except ValueError:
                 await callback_query.answer("Noto'g'ri sahifa.")
-                return
+            return
             REMOVE_CHANNEL_STATE[user_id]["page"] = max(0, new_page)
             markup = create_remove_list_markup(page=new_page)
             try:
                 await callback_query.message.edit_reply_markup(markup)
             except Exception:
                 try:
-                    await callback_query.message.edit_text(
+        await callback_query.message.edit_text(
                         "📋 O'chirish uchun kanal tanlang (tugmadan foydalaning):",
                         reply_markup=markup,
                     )
                 except Exception:
                     pass
-            await callback_query.answer()
+    await callback_query.answer()
             return
         if data.startswith("channels_page_"):
             if callback_query.from_user and callback_query.from_user.id not in ADMIN_USERS:
@@ -637,7 +673,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             except Exception:
                 pass
             await callback_query.answer()
-            return
+                return
         if data == "diagnose_download":
             if callback_query.from_user and callback_query.from_user.id not in ADMIN_USERS:
                 await callback_query.answer("Ruxsat yo'q")
@@ -650,14 +686,14 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                 await client.send_document(callback_query.from_user.id, doc, caption="Diagnose to'liq hisobot")
             except Exception:
                 pass
-            return
+        return    
         if data.startswith("fw_yes:") or data.startswith("fw_no:"):
             approve = data.startswith("fw_yes:")
             token = data.split(":", 1)[1]
             entry = PENDING_FORWARDS.get(token)
             if not entry:
                 await callback_query.answer("Bu so'rov topilmadi yoki muddati o'tgan.")
-                return
+            return
             status = entry.get("status")
             if status != "waiting":
                 await callback_query.answer("Allaqachon javob berilgan.")
@@ -674,7 +710,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                         await client.edit_message_text(admin_id, msg_id, "❌ Yuborish bekor qilindi.")
                     except Exception:
                         continue
-                return
+            return            
 
             from_chat_id = int(entry["from_chat_id"]) if "from_chat_id" in entry else None
             message_ids = list(entry.get("message_ids", []))
@@ -720,7 +756,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             if chat_id in DESTINATION_CHANNELS:
                 await callback_query.answer("❌ Bu kanal allaqachon ro'yxatda mavjud!")
                 return
-            channel_info = CHECK_CHANNEL_STATE[user_id]
+                    channel_info = CHECK_CHANNEL_STATE[user_id]
             DESTINATION_CHANNELS[chat_id] = channel_info.get("title") or str(chat_id)
             save_channels(DESTINATION_CHANNELS)
             await callback_query.message.edit_text(
@@ -730,7 +766,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             )
             CHECK_CHANNEL_STATE.pop(user_id, None)
             await callback_query.answer()
-            return
+                return
 
         if data.startswith("remove_channel_"):
             chat_id = int(data.split("_")[2])
@@ -742,7 +778,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             await callback_query.message.edit_text(
                 "✅ Kanal muvaffaqiyatli o'chirildi:\n"
                 f"• Nomi: {channel_name}\n"
-                f"• ID: {chat_id}"
+                    f"• ID: {chat_id}"
             )
             REMOVE_CHANNEL_STATE.pop(user_id, None)
             await callback_query.answer()
@@ -771,7 +807,7 @@ async def handle_message(client: Client, message: Message) -> None:
     if message.media_group_id:
         media_group_id = str(message.media_group_id)
         if media_group_id not in media_groups:
-            media_groups[media_group_id] = []
+                media_groups[media_group_id] = []
         media_groups[media_group_id].append(message)
 
         # debounce timer per media group
@@ -836,8 +872,8 @@ if __name__ == "__main__":
         logger.error("SOURCE_CHANNEL is not set (env or channels.json). Set it before running.")
     else:
         logger.info("Userbot starting...")
-        logger.info(f"Manba kanal: {SOURCE_CHANNEL}")
-        logger.info(f"Maqsad kanallar: {DESTINATION_CHANNELS}")
+    logger.info(f"Manba kanal: {SOURCE_CHANNEL}")
+    logger.info(f"Maqsad kanallar: {DESTINATION_CHANNELS}")
         app.run()
 
 
