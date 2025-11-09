@@ -573,7 +573,7 @@ async def process_channel_remove_request(client: Client, message: Message, user_
         else:
             # Try resolving username to id
             try:
-            chat = await client.get_chat(channel)
+                chat = await client.get_chat(channel)
                 chat_id = int(chat.id)
             except Exception:
                 chat_id = None
@@ -588,7 +588,7 @@ async def process_channel_remove_request(client: Client, message: Message, user_
         if chat_id is None or chat_id not in DESTINATION_CHANNELS:
             REMOVE_CHANNEL_STATE.pop(user_id, None)
             await message.reply_text("❌ Bu kanal ro'yxatda topilmadi!")
-                return
+            return
 
         channel_name = DESTINATION_CHANNELS[chat_id]
         keyboard = InlineKeyboardMarkup([
