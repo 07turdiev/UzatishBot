@@ -4,16 +4,22 @@ import json
 import asyncio
 import logging
 import io
+import re
+import tempfile
 from typing import Dict, List, Optional, Tuple, Union, Set
+from html import escape as html_escape
 
+import aiohttp
 from dotenv import load_dotenv
 from pyrogram import Client, filters
 from pyrogram.types import (
     Message,
+    MessageEntity,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
 )
+from pyrogram.enums import MessageEntityType
 from pyrogram.errors import FloodWait, RPCError
 
 
@@ -29,7 +35,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Configuration
 def _parse_int(value: Optional[str], name: str) -> int:
     if value is None or value == "":
         raise RuntimeError(f"Missing required env: {name}")
@@ -56,6 +61,11 @@ ADMIN_USERS: List[int] = [
     for x in os.getenv("ADMIN_USERS", "").split(",")
     if x.strip().isdigit()
 ]
+
+# Website API Configuration
+WEBSITE_API_URL = os.getenv("WEBSITE_API_URL", "")
+WEBSITE_API_KEY = os.getenv("WEBSITE_API_KEY", "")
+ENABLE_WEBSITE_API = os.getenv("ENABLE_WEBSITE_API", "false").lower() == "true"
 
 
 # JSON persistence
@@ -206,6 +216,166 @@ async def ensure_destination_access(client: Client, dest_channel: int) -> bool:
         )
         INVALID_DEST_CHANNELS.add(dest_channel)
     return False
+
+
+async def download_media_to_temp(client: Client, message: Message) -> Optional[str]:
+    """Download media from message to a temporary file."""
+    if not message.photo and not message.video and not message.document:
+        return None
+    try:
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+        temp_path = temp_file.name
+        temp_file.close()
+        await client.download_media(message, file_name=temp_path)
+        return temp_path
+    except Exception as e:
+        logger.error(f"Error downloading media: {e}")
+        return None
+
+
+async def send_to_website_api(
+    title: str,
+    body: str,
+    image_paths: List[str]
+) -> Tuple[bool, str]:
+    """Send post data to website API."""
+    if not WEBSITE_API_URL or not WEBSITE_API_KEY:
+        return False, "API not configured"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            data = aiohttp.FormData()
+            
+            # Add text fields for all languages
+            for lang in ["uz", "ru", "en", "kr"]:
+                data.add_field(f"title_{lang}", title)
+                data.add_field(f"body_{lang}", body)
+                data.add_field(f"short_description_{lang}", title[:150])
+            
+            # Add images
+            if image_paths:
+                # First image is primary
+                with open(image_paths[0], "rb") as f:
+                    data.add_field(
+                        "image",
+                        f.read(),
+                        filename=os.path.basename(image_paths[0]),
+                        content_type="image/jpeg"
+                    )
+                # Additional images
+                for img_path in image_paths[1:]:
+                    with open(img_path, "rb") as f:
+                        data.add_field(
+                            "additional_images",
+                            f.read(),
+                            filename=os.path.basename(img_path),
+                            content_type="image/jpeg"
+                        )
+            
+            headers = {"X-API-KEY": WEBSITE_API_KEY}
+            async with session.post(WEBSITE_API_URL, data=data, headers=headers) as response:
+                response_text = await response.text()
+                if response.status == 200 or response.status == 201:
+                    logger.info("✅ Website API: Post created successfully")
+                    return True, "Success"
+                else:
+                    logger.error(f"❌ Website API error: {response.status} - {response_text}")
+                    return False, f"Status {response.status}"
+    except Exception as e:
+        logger.error(f"❌ Website API exception: {e}")
+        return False, str(e)
+    finally:
+        # Cleanup temp files
+        for path in image_paths:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except Exception:
+                pass
+
+
+def telegram_to_html(text: str, entities: Optional[List[MessageEntity]]) -> str:
+    """Convert Telegram message with entities to HTML."""
+    if not text:
+        return ""
+    
+    if not entities:
+        escaped = html_escape(text)
+        return escaped.replace("\n", "<br>")
+    
+    sorted_entities = sorted(entities, key=lambda e: e.offset)
+    result = []
+    last_offset = 0
+    
+    for entity in sorted_entities:
+        if entity.offset > last_offset:
+            before_text = text[last_offset:entity.offset]
+            result.append(html_escape(before_text))
+        
+        entity_text = text[entity.offset:entity.offset + entity.length]
+        escaped_text = html_escape(entity_text)
+        
+        if entity.type == MessageEntityType.BOLD:
+            result.append(f"<strong>{escaped_text}</strong>")
+        elif entity.type == MessageEntityType.ITALIC:
+            result.append(f"<em>{escaped_text}</em>")
+        elif entity.type == MessageEntityType.UNDERLINE:
+            result.append(f"<u>{escaped_text}</u>")
+        elif entity.type == MessageEntityType.STRIKETHROUGH:
+            result.append(f"<s>{escaped_text}</s>")
+        elif entity.type == MessageEntityType.CODE:
+            result.append(f"<code>{escaped_text}</code>")
+        elif entity.type == MessageEntityType.PRE:
+            result.append(f"<pre>{escaped_text}</pre>")
+        elif entity.type == MessageEntityType.TEXT_LINK:
+            url = entity.url or ""
+            result.append(f'<a href="{html_escape(url)}" target="_blank">{escaped_text}</a>')
+        elif entity.type == MessageEntityType.URL:
+            result.append(f'<a href="{html_escape(entity_text)}" target="_blank">{escaped_text}</a>')
+        elif entity.type == MessageEntityType.MENTION:
+            result.append(f'<a href="https://t.me/{entity_text[1:]}" target="_blank">{escaped_text}</a>')
+        elif entity.type == MessageEntityType.HASHTAG:
+            result.append(escaped_text)
+        else:
+            result.append(escaped_text)
+        
+        last_offset = entity.offset + entity.length
+    
+    if last_offset < len(text):
+        result.append(html_escape(text[last_offset:]))
+    
+    html_text = "".join(result)
+    html_text = html_text.replace("\n", "<br>")
+    return html_text
+
+
+def format_text_for_api(text: str) -> str:
+    """Format text for website API - remove hashtags, convert newlines to <br>."""
+    if not text:
+        return ""
+    
+    lines = text.split("\n")
+    filtered_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            filtered_lines.append("")
+            continue
+        
+        words = stripped.split()
+        if words and all(word.startswith("#") for word in words):
+            continue
+        
+        clean_line = re.sub(r'#\w+', '', line)
+        clean_line = re.sub(r'  +', ' ', clean_line).strip()
+        
+        if clean_line:
+            filtered_lines.append(clean_line)
+    
+    result = "<br>".join(filtered_lines)
+    result = re.sub(r'(<br>){3,}', '<br><br>', result)
+    return result.strip()
 
 
 def _make_forward_token_for_message(chat_id: int, message_id: int) -> str:
@@ -698,42 +868,203 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
             if status != "waiting":
                 await callback_query.answer("Allaqachon javob berilgan.")
                 return
-            await callback_query.answer("Qabul qilindi")
-            try:
-                await callback_query.message.edit_text("Yuborish boshlandi...")
-            except Exception:
-                pass
+            
             if not approve:
                 entry["status"] = "cancelled"
+                await callback_query.answer("Bekor qilindi")
                 for admin_id, msg_id in list(entry.get("admin_message_ids", {}).items()):
                     try:
                         await client.edit_message_text(admin_id, msg_id, "❌ Yuborish bekor qilindi.")
                     except Exception:
                         continue
                 return
+            
+            # Show destination selection UI
+            entry["status"] = "selecting"
+            entry["destinations"] = {"channels": True, "website": True}
+            await callback_query.answer("Manzillarni tanlang")
+            
+            ch_check = "☑️" if entry["destinations"]["channels"] else "◻️"
+            web_check = "☑️" if entry["destinations"]["website"] else "◻️"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(f"{ch_check} Kanallar", callback_data=f"dest_ch:{token}"),
+                    InlineKeyboardButton(f"{web_check} Sayt", callback_data=f"dest_web:{token}")
+                ],
+                [InlineKeyboardButton("✅ Yuborish", callback_data=f"dest_confirm:{token}")]
+            ])
+            
+            try:
+                await callback_query.message.edit_text(
+                    "📍 Qayerga yuborish kerak?\n\nTanlang va \"Yuborish\" tugmasini bosing:",
+                    reply_markup=keyboard
+                )
+            except Exception:
+                pass
+            return
+        
+        # Handle destination toggle buttons
+        if data.startswith("dest_ch:") or data.startswith("dest_web:"):
+            is_channels = data.startswith("dest_ch:")
+            token = data.split(":", 1)[1]
+            entry = PENDING_FORWARDS.get(token)
+            if not entry:
+                await callback_query.answer("So'rov topilmadi.")
+                return
+            if entry.get("status") != "selecting":
+                await callback_query.answer("Bu so'rov aktiv emas.")
+                return
+            
+            key = "channels" if is_channels else "website"
+            entry["destinations"][key] = not entry["destinations"].get(key, True)
+            
+            ch_check = "☑️" if entry["destinations"]["channels"] else "◻️"
+            web_check = "☑️" if entry["destinations"]["website"] else "◻️"
+            
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(f"{ch_check} Kanallar", callback_data=f"dest_ch:{token}"),
+                    InlineKeyboardButton(f"{web_check} Sayt", callback_data=f"dest_web:{token}")
+                ],
+                [InlineKeyboardButton("✅ Yuborish", callback_data=f"dest_confirm:{token}")]
+            ])
+            
+            await callback_query.answer()
+            try:
+                await callback_query.message.edit_reply_markup(reply_markup=keyboard)
+            except Exception:
+                pass
+            return
+        
+        # Handle destination confirm
+        if data.startswith("dest_confirm:"):
+            token = data.split(":", 1)[1]
+            entry = PENDING_FORWARDS.get(token)
+            if not entry:
+                await callback_query.answer("So'rov topilmadi.")
+                return
+            if entry.get("status") != "selecting":
+                await callback_query.answer("Bu so'rov aktiv emas.")
+                return
+            
+            destinations = entry.get("destinations", {"channels": True, "website": True})
+            if not destinations.get("channels") and not destinations.get("website"):
+                await callback_query.answer("Kamida bitta manzil tanlang!")
+                return
+            
+            await callback_query.answer("Yuborish boshlandi...")
+            try:
+                await callback_query.message.edit_text("⏳ Yuborilmoqda...")
+            except Exception:
+                pass
 
             from_chat_id = int(entry["from_chat_id"]) if "from_chat_id" in entry else None
             message_ids = list(entry.get("message_ids", []))
             success = 0
             attempted = 0
-            for dest_channel_id in list(DESTINATION_CHANNELS.keys()):
-                if not await ensure_destination_access(client, dest_channel_id):
-                    continue
-                attempted += 1
-                if from_chat_id is not None and message_ids:
-                    ok = await safe_forward_messages(client, from_chat_id, message_ids, dest_channel_id)
-                else:
-                    ok = False
-                if ok:
-                    success += 1
-                await asyncio.sleep(0.05)
+            
+            # Forward to channels if selected
+            if destinations.get("channels"):
+                for dest_channel_id in list(DESTINATION_CHANNELS.keys()):
+                    if not await ensure_destination_access(client, dest_channel_id):
+                        continue
+                    attempted += 1
+                    if from_chat_id is not None and message_ids:
+                        ok = await safe_forward_messages(client, from_chat_id, message_ids, dest_channel_id)
+                    else:
+                        ok = False
+                    if ok:
+                        success += 1
+                    await asyncio.sleep(0.05)
+            
+            # Send to Website API (only if selected)
+            api_status = ""
+            if destinations.get("website") and ENABLE_WEBSITE_API and from_chat_id is not None and message_ids:
+                try:
+                    messages = []
+                    for msg_id in message_ids:
+                        try:
+                            msg = await client.get_messages(from_chat_id, msg_id)
+                            if msg:
+                                messages.append(msg)
+                        except Exception:
+                            continue
+                    
+                    if messages:
+                        post_text = ""
+                        post_entities = None
+                        for msg in messages:
+                            if msg.text:
+                                post_text = msg.text
+                                post_entities = msg.entities
+                                break
+                            elif msg.caption:
+                                post_text = msg.caption
+                                post_entities = msg.caption_entities
+                                break
+                        
+                        raw_lines = post_text.strip().split("\n")
+                        title = ""
+                        
+                        for i, line in enumerate(raw_lines):
+                            stripped = line.strip()
+                            if not stripped:
+                                continue
+                            words = stripped.split()
+                            if words and all(word.startswith("#") for word in words):
+                                continue
+                            clean_title = re.sub(r'#\w+', '', stripped).strip()
+                            if not clean_title:
+                                continue
+                            title = clean_title[:200]
+                            break
+                        
+                        if not title:
+                            title = "Yangilik"
+                        
+                        html_body = telegram_to_html(post_text, post_entities)
+                        html_body = re.sub(r'#\w+', '', html_body)
+                        html_body = re.sub(r'<br>\s*<br>\s*<br>', '<br><br>', html_body)
+                        body = html_body.strip()
+                        
+                        if not body:
+                            body = format_text_for_api(post_text)
+                        
+                        image_paths: List[str] = []
+                        for msg in messages:
+                            if msg.photo:
+                                path = await download_media_to_temp(client, msg)
+                                if path:
+                                    image_paths.append(path)
+                        
+                        if title or image_paths:
+                            api_ok, api_msg = await send_to_website_api(title, body, image_paths)
+                            if api_ok:
+                                api_status = "🌐 Sayt: ✅ Yuborildi"
+                            else:
+                                api_status = f"🌐 Sayt: ❌ {api_msg}"
+                except Exception as e:
+                    logger.error(f"Website API error: {e}")
+                    api_status = "🌐 Sayt: ❌ Xatolik"
+            
             entry["status"] = "done"
-            summary = (
-                f"✅ Yuborish yakunlandi.\n"
-                f"Maqsad kanallar: {attempted} ta\n"
-                f"Muvaffaqiyatli: {success} ta\n"
-                f"Muvaffaqiyatsiz: {attempted - success} ta"
-            )
+            
+            summary_parts = ["✅ Yuborish yakunlandi."]
+            if destinations.get("channels"):
+                summary_parts.append(f"📢 Kanallar: {success}/{attempted} ta")
+            else:
+                summary_parts.append("📢 Kanallar: o'tkazib yuborildi")
+            
+            if destinations.get("website"):
+                if api_status:
+                    summary_parts.append(api_status)
+                else:
+                    summary_parts.append("🌐 Sayt: o'tkazib yuborildi")
+            else:
+                summary_parts.append("🌐 Sayt: o'tkazib yuborildi")
+            
+            summary = "\n".join(summary_parts)
             try:
                 await callback_query.message.edit_text(summary)
             except Exception:
