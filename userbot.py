@@ -228,11 +228,17 @@ async def download_media_to_temp(client: Client, message: Message) -> Optional[s
 
 
 async def send_to_website_api(
-    title: str,
-    body: str,
+    lang_data: Dict[str, Dict[str, str]],
     image_paths: List[str]
 ) -> Tuple[bool, str]:
-    """Send post data to website API."""
+    """Send post data to website API.
+    
+    lang_data format: {
+        "uz": {"title": "...", "body": "...", "short_description": "..."},
+        "kr": {"title": "...", "body": "...", "short_description": "..."},
+        ...
+    }
+    """
     if not WEBSITE_API_URL or not WEBSITE_API_KEY:
         return False, "API not configured"
     
@@ -240,15 +246,15 @@ async def send_to_website_api(
         async with aiohttp.ClientSession() as session:
             data = aiohttp.FormData()
             
-            # Add text fields for all languages
+            # Add text fields per language
             for lang in ["uz", "ru", "en", "kr"]:
-                data.add_field(f"title_{lang}", title)
-                data.add_field(f"body_{lang}", body)
-                data.add_field(f"short_description_{lang}", title[:150])
+                ld = lang_data.get(lang, lang_data.get("uz", {}))
+                data.add_field(f"title_{lang}", ld.get("title", "Yangilik"))
+                data.add_field(f"body_{lang}", ld.get("body", ""))
+                data.add_field(f"short_description_{lang}", ld.get("short_description", ld.get("title", "")[:150]))
             
             # Add images
             if image_paths:
-                # First image is primary
                 with open(image_paths[0], "rb") as f:
                     data.add_field(
                         "image",
@@ -256,7 +262,6 @@ async def send_to_website_api(
                         filename=os.path.basename(image_paths[0]),
                         content_type="image/jpeg"
                     )
-                # Additional images
                 for img_path in image_paths[1:]:
                     with open(img_path, "rb") as f:
                         data.add_field(
@@ -279,7 +284,6 @@ async def send_to_website_api(
         logger.error(f"❌ Website API exception: {e}")
         return False, str(e)
     finally:
-        # Cleanup temp files
         for path in image_paths:
             try:
                 if os.path.exists(path):
@@ -998,32 +1002,63 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                                 post_entities = msg.caption_entities
                                 break
                         
-                        raw_lines = post_text.strip().split("\n")
-                        title = ""
+                        # Split by --- for bilingual content (kr | uz)
+                        parts = re.split(r'\n\s*---\s*\n', post_text, maxsplit=1)
                         
-                        for i, line in enumerate(raw_lines):
-                            stripped = line.strip()
-                            if not stripped:
-                                continue
-                            words = stripped.split()
-                            if words and all(word.startswith("#") for word in words):
-                                continue
-                            clean_title = re.sub(r'#\w+', '', stripped).strip()
-                            if not clean_title:
-                                continue
-                            title = clean_title[:200]
-                            break
+                        lang_data: Dict[str, Dict[str, str]] = {}
                         
-                        if not title:
-                            title = "Yangilik"
+                        def extract_title_and_body(text_part: str, entities_list) -> Dict[str, str]:
+                            """Extract title and formatted body from a text part."""
+                            lines = text_part.strip().split("\n")
+                            t = ""
+                            
+                            for line in lines:
+                                s = line.strip()
+                                if not s:
+                                    continue
+                                words_in_line = s.split()
+                                if words_in_line and all(w.startswith("#") for w in words_in_line):
+                                    continue
+                                clean = re.sub(r'#\w+', '', s).strip()
+                                if not clean:
+                                    continue
+                                t = clean[:200]
+                                break
+                            
+                            if not t:
+                                t = "Yangilik"
+                            
+                            # Build HTML body
+                            html_b = telegram_to_html(text_part, entities_list)
+                            html_b = re.sub(r'#\w+', '', html_b)
+                            # Remove social media links block at the end
+                            html_b = re.sub(r'(<br>)?\s*(Kanalǵa aǵza bolıw|Kanalga a\'zo bo\'lish).*$', '', html_b, flags=re.DOTALL | re.IGNORECASE)
+                            html_b = re.sub(r'(<br>)?\s*(Website|Telegram|Instagram|Facebook|YouTube)\s*\|?\s*\(?\s*https?://[^\s)<>]+\)?\s*', '', html_b, flags=re.IGNORECASE)
+                            html_b = re.sub(r'(<br>){3,}', '<br><br>', html_b)
+                            html_b = html_b.strip()
+                            
+                            if not html_b:
+                                html_b = format_text_for_api(text_part)
+                            
+                            return {"title": t, "body": html_b, "short_description": t[:150]}
                         
-                        html_body = telegram_to_html(post_text, post_entities)
-                        html_body = re.sub(r'#\w+', '', html_body)
-                        html_body = re.sub(r'<br>\s*<br>\s*<br>', '<br><br>', html_body)
-                        body = html_body.strip()
-                        
-                        if not body:
-                            body = format_text_for_api(post_text)
+                        if len(parts) == 2:
+                            # Bilingual: first part = kr, second = uz
+                            kr_part = parts[0]
+                            uz_part = parts[1]
+                            
+                            lang_data["kr"] = extract_title_and_body(kr_part, post_entities)
+                            lang_data["uz"] = extract_title_and_body(uz_part, post_entities)
+                            # ru and en fallback to uz
+                            lang_data["ru"] = lang_data["uz"]
+                            lang_data["en"] = lang_data["uz"]
+                            
+                            logger.info(f"📝 Bilingual post: KR title='{lang_data['kr']['title']}', UZ title='{lang_data['uz']['title']}'")
+                        else:
+                            # Single language - use for all
+                            single = extract_title_and_body(post_text, post_entities)
+                            for lang in ["uz", "ru", "en", "kr"]:
+                                lang_data[lang] = single
                         
                         image_paths: List[str] = []
                         for msg in messages:
@@ -1032,8 +1067,8 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                                 if path:
                                     image_paths.append(path)
                         
-                        if title or image_paths:
-                            api_ok, api_msg = await send_to_website_api(title, body, image_paths)
+                        if lang_data.get("uz", {}).get("title") or image_paths:
+                            api_ok, api_msg = await send_to_website_api(lang_data, image_paths)
                             if api_ok:
                                 api_status = "🌐 Sayt: ✅ Yuborildi"
                             else:
