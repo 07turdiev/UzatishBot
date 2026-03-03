@@ -68,45 +68,39 @@ WEBSITE_API_KEY = os.getenv("WEBSITE_API_KEY", "")
 ENABLE_WEBSITE_API = os.getenv("ENABLE_WEBSITE_API", "false").lower() == "true"
 
 
+# Source channel from .env only
+_source_env = os.getenv("SOURCE_CHANNEL")
+SOURCE_CHANNEL = int(_source_env) if (_source_env and _source_env.strip("-+").isdigit()) else 0
+
+
 # JSON persistence
 CHANNELS_FILE = "channels.json"
 
 
-def load_channels() -> Tuple[int, Dict[int, str]]:
-    """Load source and destination channels.
-
-    Returns (source_channel, destination_channels)
-    """
-    source_env = os.getenv("SOURCE_CHANNEL")
-    default_source = int(source_env) if (source_env and source_env.strip("-+").isdigit()) else 0
-
+def load_channels() -> Dict[int, str]:
+    """Load destination channels from channels.json."""
     try:
         with open(CHANNELS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        source_channel = data.get("source_channel", default_source)
         dest_map = data.get("destination_channels", {}) or {}
-        # ensure keys are ints
         dest_channels: Dict[int, str] = {}
         for k, v in dest_map.items():
             try:
                 dest_channels[int(k)] = str(v)
             except (ValueError, TypeError):
                 continue
-        if isinstance(source_channel, str) and source_channel.strip("-+").isdigit():
-            source_channel = int(source_channel)
-        return int(source_channel), dest_channels
+        return dest_channels
     except FileNotFoundError:
-        logger.info("channels.json not found, using env defaults")
-        return default_source, {}
+        logger.info("channels.json not found")
+        return {}
     except json.JSONDecodeError:
-        logger.error("Failed to parse channels.json; using env defaults")
-        return default_source, {}
+        logger.error("Failed to parse channels.json")
+        return {}
 
 
 def save_channels(destination_channels: Dict[int, str]) -> None:
-    """Persist channels to JSON file."""
+    """Persist destination channels to JSON file."""
     payload = {
-        "source_channel": SOURCE_CHANNEL,
         "destination_channels": destination_channels,
     }
     try:
@@ -117,7 +111,7 @@ def save_channels(destination_channels: Dict[int, str]) -> None:
 
 
 # Load initial channels
-SOURCE_CHANNEL, DESTINATION_CHANNELS = load_channels()
+DESTINATION_CHANNELS = load_channels()
 if not isinstance(SOURCE_CHANNEL, int):
     try:
         SOURCE_CHANNEL = int(SOURCE_CHANNEL)
