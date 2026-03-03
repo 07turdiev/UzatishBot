@@ -1002,8 +1002,8 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                                 post_entities = msg.caption_entities
                                 break
                         
-                        # Split by --- for bilingual content (kr | uz)
-                        parts = re.split(r'\n\s*---\s*\n', post_text, maxsplit=1)
+                        # Split by —— for bilingual content (kr | uz)
+                        parts = re.split(r'\n\s*——\s*\n', post_text, maxsplit=1)
                         
                         lang_data: Dict[str, Dict[str, str]] = {}
                         
