@@ -1,7 +1,14 @@
+import asyncio
+
+# Fix for Python 3.10+ where get_event_loop() no longer auto-creates a loop
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import os
 import math
 import json
-import asyncio
 import logging
 import io
 import re
@@ -63,9 +70,9 @@ ADMIN_USERS: List[int] = [
 ]
 
 # Website API Configuration
-WEBSITE_API_URL = os.getenv("WEBSITE_API_URL", "")
-WEBSITE_API_KEY = os.getenv("WEBSITE_API_KEY", "")
-ENABLE_WEBSITE_API = os.getenv("ENABLE_WEBSITE_API", "false").lower() == "true"
+WEBSITE_API_URL = os.getenv("MADANIYAT_API_URL", os.getenv("WEBSITE_API_URL", ""))
+WEBSITE_API_KEY = os.getenv("MADANIYAT_API_KEY", os.getenv("WEBSITE_API_KEY", ""))
+ENABLE_WEBSITE_API = os.getenv("ENABLE_WEBSITE_POST", "false").lower() == "true"
 
 
 # Source channel from .env only
@@ -75,6 +82,9 @@ SOURCE_CHANNEL = int(_source_env) if (_source_env and _source_env.strip("-+").is
 
 # JSON persistence
 CHANNELS_FILE = "channels.json"
+
+# Default image when post has no photo
+DEFAULT_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defauld.jpg")
 
 
 def load_channels() -> Dict[int, str]:
@@ -286,7 +296,8 @@ async def send_to_website_api(
     finally:
         for path in image_paths:
             try:
-                if os.path.exists(path):
+                # Don't delete the default image
+                if os.path.exists(path) and os.path.abspath(path) != os.path.abspath(DEFAULT_IMAGE_PATH):
                     os.unlink(path)
             except Exception:
                 pass
@@ -1002,8 +1013,31 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                                 post_entities = msg.caption_entities
                                 break
                         
-                        # Split by —— for bilingual content (kr | uz)
-                        parts = re.split(r'\n\s*——\s*\n', post_text, maxsplit=1)
+                        # Clean footer: remove social media links block
+                        def clean_footer(text: str) -> str:
+                            """Remove footer lines with social media links."""
+                            # Remove "Ministrliktiń málimleme xızmeti" and similar footer lines
+                            text = re.sub(
+                                r'\n\s*Ministrlikti[ńn] m[áa]limleme x[ıi]zmeti.*$',
+                                '', text, flags=re.DOTALL | re.IGNORECASE
+                            )
+                            # Remove emoji+link lines like 🌍 vebsayt| 📱instagram| etc.
+                            text = re.sub(
+                                r'\n\s*[🌍📱🕊📺\U0001F300-\U0001FAFF]\s*(vebsayt|instagram|facebook|telegram|youtube).*$',
+                                '', text, flags=re.DOTALL | re.IGNORECASE
+                            )
+                            # Remove Kanalga a'zo bo'lish / Kanalǵa aǵza bolıw lines
+                            text = re.sub(
+                                r'\n\s*(Kanalǵa aǵza bolıw|Kanalga a\'zo bo\'lish).*$',
+                                '', text, flags=re.DOTALL | re.IGNORECASE
+                            )
+                            return text.rstrip()
+                        
+                        # Clean the post text before splitting
+                        post_text = clean_footer(post_text)
+                        
+                        # Split by ——— (three or more dashes/lines) for bilingual content (kr | uz)
+                        parts = re.split(r'\n\s*[—\-]{2,}\s*\n', post_text, maxsplit=1)
                         
                         lang_data: Dict[str, Dict[str, str]] = {}
                         
@@ -1033,6 +1067,8 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                             html_b = re.sub(r'#\w+', '', html_b)
                             # Remove social media links block at the end
                             html_b = re.sub(r'(<br>)?\s*(Kanalǵa aǵza bolıw|Kanalga a\'zo bo\'lish).*$', '', html_b, flags=re.DOTALL | re.IGNORECASE)
+                            html_b = re.sub(r'(<br>)?\s*Ministrlikti[ńn] m[áa]limleme x[ıi]zmeti.*$', '', html_b, flags=re.DOTALL | re.IGNORECASE)
+                            html_b = re.sub(r'(<br>)?\s*[🌍📱🕊📺]\s*(vebsayt|instagram|facebook|telegram|youtube).*$', '', html_b, flags=re.DOTALL | re.IGNORECASE)
                             html_b = re.sub(r'(<br>)?\s*(Website|Telegram|Instagram|Facebook|YouTube)\s*\|?\s*\(?\s*https?://[^\s)<>]+\)?\s*', '', html_b, flags=re.IGNORECASE)
                             html_b = re.sub(r'(<br>){3,}', '<br><br>', html_b)
                             html_b = html_b.strip()
@@ -1060,6 +1096,7 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                             for lang in ["uz", "ru", "en", "kr"]:
                                 lang_data[lang] = single
                         
+                        # Collect photo images
                         image_paths: List[str] = []
                         for msg in messages:
                             if msg.photo:
@@ -1067,12 +1104,33 @@ async def handle_channel_callback(client: Client, callback_query: CallbackQuery)
                                 if path:
                                     image_paths.append(path)
                         
+                        # If no photos found, use default image
+                        if not image_paths and os.path.exists(DEFAULT_IMAGE_PATH):
+                            image_paths.append(DEFAULT_IMAGE_PATH)
+                            logger.info("📷 Postda rasm topilmadi, defauld.jpg ishlatilmoqda")
+                        
+                        # Collect document files
+                        file_paths: List[str] = []
+                        for msg in messages:
+                            if msg.document and not msg.photo and not msg.video:
+                                path = await download_media_to_temp(client, msg)
+                                if path:
+                                    file_paths.append(path)
+                        
                         if lang_data.get("uz", {}).get("title") or image_paths:
                             api_ok, api_msg = await send_to_website_api(lang_data, image_paths)
                             if api_ok:
                                 api_status = "🌐 Sayt: ✅ Yuborildi"
                             else:
                                 api_status = f"🌐 Sayt: ❌ {api_msg}"
+                        
+                        # Cleanup downloaded file paths (but not default image)
+                        for fp in file_paths:
+                            try:
+                                if os.path.exists(fp) and fp != DEFAULT_IMAGE_PATH:
+                                    os.unlink(fp)
+                            except Exception:
+                                pass
                 except Exception as e:
                     logger.error(f"Website API error: {e}")
                     api_status = "🌐 Sayt: ❌ Xatolik"
