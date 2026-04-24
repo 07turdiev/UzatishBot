@@ -1,0 +1,14 @@
+[Unit]
+Description=UzatishBot Telegram UserBot Service
+After=network.target
+
+[Service]
+User=user
+Group=user
+WorkingDirectory=/home/user/qqrboshqarma/UzatishBot
+ExecStart=/home/user/qqrboshqarma/UzatishBot/venv/bin/python userbot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
