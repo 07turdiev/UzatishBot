@@ -1,5 +1,9 @@
 venv/
+.venv/
 *.session
+*.session-journal
 __pycache__/
 .env
 .idea
+logs/
+state.json
