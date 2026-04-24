@@ -1,17 +1,3 @@
 {
-  "destination_channels": {
-    "-1002323831949": "test kanal 2",
-    "-1002291511179": "test kanal 3",
-    "-1001227470536": "YUNUSOBOD MADANIYAT BO'LIMI",
-    "-1002178304862": "Toshkent shahar 34-son Islom Karimov nomidagi madaniyat markazi",
-    "-1001645411520": "Yashnobod tumani Madaniyat boʻlimi | Rasmiy sahifa",
-    "-1002480314967": "Shayxontohur tumani Madaniyat bo'limi",
-    "-1001594550132": "YAKKASAROY TUMAN MADANIYAT BO'LIMI",
-    "-1002404681718": "Olmazor tumani Madaniyat bo'limi | Rasmiy",
-    "-1001670363425": "Uchtepa tumani Madaniyat bo'limi",
-    "-1002401678133": "Sergeli Madanyat markazi",
-    "-1003205537371": "Toshkent shahar Planetariysi",
-    "-1002822138864": "Bektemir Madaniyat Markazi",
-    "-1001201918919": "Mirzo Ulug'bek tuman Madaniyat bo'limi Axborot xizmati"
-  }
+  "destination_channels": {}
 }
