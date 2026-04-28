@@ -6,7 +6,7 @@ After=network.target
 User=user
 Group=user
 WorkingDirectory=/home/user/qqrboshqarma/UzatishBot
-ExecStart=/home/user/qqrboshqarma/UzatishBot/venv/bin/python userbot.py
+ExecStart=/home/user/qqrboshqarma/UzatishBot/venv/bin/python run.py
 Restart=always
 RestartSec=5
 
