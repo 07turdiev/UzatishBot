@@ -58,9 +58,11 @@ ADMIN_USERS: List[int] = [
 ]
 
 # Website API
-WEBSITE_API_URL = os.getenv("WEBSITE_API_URL", "")
-WEBSITE_API_KEY = os.getenv("WEBSITE_API_KEY", "")
-ENABLE_WEBSITE_API = os.getenv("ENABLE_WEBSITE_API", "false").lower() == "true"
+WEBSITE_API_URL = os.getenv("MADANIYAT_API_URL") or os.getenv("WEBSITE_API_URL", "")
+WEBSITE_API_KEY = os.getenv("MADANIYAT_API_KEY") or os.getenv("WEBSITE_API_KEY", "")
+ENABLE_WEBSITE_API = (
+    os.getenv("ENABLE_WEBSITE_POST", os.getenv("ENABLE_WEBSITE_API", "false")).lower() == "true"
+)
 
 # Source channel
 _source_env = os.getenv("SOURCE_CHANNEL")
